@@ -4236,12 +4236,13 @@ fn parse_call_args<'n>(p: &mut dyn AbstractParser<'n>) -> ReportedResult<Vec<Cal
     let mut v = Vec::new();
     while p.peek(0).0 != CloseDelim(Paren) {
         match p.peek(0) {
-            (Comma, sp) | (CloseDelim(Paren), sp) => v.push(CallArg {
-                span: sp,
-                name_span: sp,
-                name: None,
-                expr: None,
-            }),
+            (Comma, sp) | (CloseDelim(Paren), sp) => v.push(CallArg::new(
+                sp,
+                CallArgData {
+                    name: None,
+                    expr: None,
+                },
+            )),
             (Period, mut sp) => {
                 p.bump();
                 let (name, mut name_sp) = p.eat_ident("argument name")?;
@@ -4255,22 +4256,24 @@ fn parse_call_args<'n>(p: &mut dyn AbstractParser<'n>) -> ReportedResult<Vec<Cal
                 })?;
                 sp.expand(p.last_span());
 
-                v.push(CallArg {
-                    span: sp,
-                    name_span: name_sp,
-                    name: Some(name),
-                    expr: expr,
-                });
+                v.push(CallArg::new(
+                    sp,
+                    CallArgData {
+                        name: Some(Spanned::new(name, name_sp)),
+                        expr,
+                    },
+                ));
             }
             (_, mut sp) => {
                 let expr = parse_expr(p)?;
                 sp.expand(p.last_span());
-                v.push(CallArg {
-                    span: sp,
-                    name_span: sp,
-                    name: None,
-                    expr: Some(expr),
-                });
+                v.push(CallArg::new(
+                    sp,
+                    CallArgData {
+                        name: None,
+                        expr: Some(expr),
+                    },
+                ));
             }
         }
 
