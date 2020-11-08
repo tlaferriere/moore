@@ -1649,6 +1649,9 @@ where
                 "runtime string comparisons not implemented"
             ),
 
+            mir::RvalueKind::Call { .. } => bug_span!(mir.span, self.cx, "calls not implemented"),
+
+            // Propagate tombstones.
             mir::RvalueKind::Error => Err(()),
         };
 
