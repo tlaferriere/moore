@@ -1,0 +1,10 @@
+- implement subtype indication
+- implement array type data
+- implement all type data
+- type castability checks
+- ensure recursive types work
+- map subtype decl to a type
+- implement all subtype constraints
+- implement const decl
+- implement package generics
+- implement package instantiation
