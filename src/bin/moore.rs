@@ -15,12 +15,14 @@ use moore::score::{ScoreBoard, ScoreContext};
 use moore::svlog::{hir::Visitor as _, QueryDatabase as _};
 use moore::*;
 use std::path::Path;
+use moore_rhdl::syntax::ast::DesignUnit;
 
 #[derive(Debug)]
 enum Language {
     Verilog,
     SystemVerilog,
     Vhdl,
+    Rhdl,
 }
 
 fn main() {
@@ -218,6 +220,7 @@ fn score(sess: &Session, matches: &ArgMatches) {
             Some("sv") | Some("svh") => Language::SystemVerilog,
             Some("v") | Some("vh") => Language::Verilog,
             Some("vhd") | Some("vhdl") => Language::Vhdl,
+            Some("rhd") | Some("rhdl") => Language::Rhdl,
             Some(ext) => {
                 sess.emit(
                     DiagBuilder2::warning(format!("ignoring `{}`", filename)).add_note(format!(
@@ -281,6 +284,10 @@ fn score(sess: &Session, matches: &ArgMatches) {
                 Ok(x) => asts.push(score::Ast::Vhdl(x)),
                 Err(()) => failed = true,
             },
+            Language::Rhdl => match rhdl::syntax::parse(source) {
+                Ok(x) => asts.push(score::Ast::Rhdl(x)),
+                Err(()) => failed = true,
+            }
         }
     }
     if failed || sess.failed() {
@@ -316,16 +323,20 @@ fn score(sess: &Session, matches: &ArgMatches) {
     let arenas = score::Arenas::new();
     let sb = ScoreBoard::new(&arenas);
     let vhdl_sb = vhdl::score::ScoreBoard::new(&arenas.vhdl);
+    let rhdl_sb = rhdl::score::ScoreBoard::new(&arenas.rhdl);
     let svlog_sb = svlog::GlobalContext::new(&sess, &svlog_arenas);
 
     // Elaborate the requested entities or modules.
     {
         let vhdl_phases = vhdl::lazy::LazyPhaseTable::new(&vhdl_sb);
+        let rhdl_phases = rhdl::lazy::LazyPhaseTable::new(&rhdl_sb);
         let ctx = ScoreContext {
             sess: sess,
             sb: &sb,
             vhdl: &vhdl_sb,
             vhdl_phases: &vhdl_phases,
+            rhdl: &rhdl_sb,
+            rhdl_phases: &rhdl_phases,
             svlog: &svlog_sb,
         };
         let lib_id = ctx.add_library(lib, &asts);
@@ -350,6 +361,7 @@ fn score(sess: &Session, matches: &ArgMatches) {
     // Extract the populated LLHD modules from the scoreboards and link them
     // together.
     let _vhdl_module = vhdl_sb.llmod.into_inner();
+    let _rhdl_module = rhdl_sb.llmod.into_inner();
 
     // Emit the module.
     // TODO: Re-enable this once the VHDL crate has been moved over to llhd v0.8.
@@ -406,6 +418,8 @@ fn elaborate_name(
     enum Elaborate {
         VhdlEntity(vhdl::score::EntityRef, vhdl::score::ArchRef),
         VhdlPkg(vhdl::score::PkgDeclRef),
+        RhdlEntity(rhdl::score::EntityRef, rhdl::score::ArchRef),
+        RhdlPkg(rhdl::score::PkgDeclRef),
         Svlog(NodeId), // TODO: handle svlog case
     }
     let defs = ctx.defs(lib.into())?;
@@ -443,6 +457,39 @@ fn elaborate_name(
             Elaborate::VhdlEntity(entity, arch_ref)
         }
         Some(&score::Def::Vhdl(vhdl::score::Def::Pkg(p))) => Elaborate::VhdlPkg(p),
+        Some(&score::Def::Rhdl(rhdl::score::Def::Entity(entity))) => {
+            let archs = ctx
+                .rhdl()
+                .archs(rhdl::score::LibRef::new(lib.into()))?
+                .by_entity
+                .get(&entity)
+                .unwrap();
+            let arch_ref = if let Some(arch) = arch {
+                match archs.by_name.get(&arch) {
+                    Some(&id) => id,
+                    None => {
+                        ctx.sess.emit(DiagBuilder2::error(format!(
+                            "`{}` is not an architecture of entity `{}`",
+                            arch, name
+                        )));
+                        return Err(());
+                    }
+                }
+            } else {
+                match archs.ordered.last() {
+                    Some(&id) => id,
+                    None => {
+                        ctx.sess.emit(DiagBuilder2::error(format!(
+                            "Entity `{}` has no architecture defined",
+                            name
+                        )));
+                        return Err(());
+                    }
+                }
+            };
+            Elaborate::RhdlEntity(entity, arch_ref)
+        }
+        Some(&score::Def::Rhdl(rhdl::score::Def::Pkg(p))) => Elaborate::RhdlPkg(p),
         Some(&score::Def::Svlog(e)) => Elaborate::Svlog(e),
         _ => {
             let mut d = DiagBuilder2::error(format!("Item `{}` does not exist", name))
@@ -473,6 +520,20 @@ fn elaborate_name(
             tyc.typeck(pkg);
             // use moore::vhdl::codegen::Codegen;
             // ctx.vhdl().codegen(pkg, &mut ())?;
+        }
+        Elaborate::RhdlEntity(_entity, arch) => {
+            // let decl = ctx.rhdl.lldecl(arch);
+            // println!("Architecture declared as {:?}", decl);
+            let def = ctx.rhdl().llunit(arch)?;
+            eprintln!("Architecture declared as {:?}", def);
+        }
+        Elaborate::RhdlPkg(pkg) => {
+            use moore::rhdl::typeck::{Typeck, TypeckContext};
+            let sbc = ctx.rhdl();
+            let tyc = TypeckContext::new(&sbc);
+            tyc.typeck(pkg);
+            // use moore::rhdl::codegen::Codegen;
+            // ctx.rhdl().codegen(pkg, &mut ())?;
         }
         Elaborate::Svlog(m) => {
             // Emit the detailed type analysis if requested.

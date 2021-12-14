@@ -1,10 +1,13 @@
 [package]
-name = "moore-vhdl-syntax"
-version = "0.13.2"
-authors = ["Fabian Schuiki <fschuiki@iis.ee.ethz.ch>"]
-edition = "2018"
+name = "moore-rhdl-syntax"
+version = "0.0.1"
+authors = [
+    "Fabian Schuiki <fschuiki@iis.ee.ethz.ch>",
+    "Thomas Laferriere <t.laferriere@protonmail.com>"
+]
+edition = "2021"
 
-description = "The VHDL parser implementation of the moore compiler framework."
+description = "The RHDL parser implementation of the moore compiler framework."
 repository = "https://github.com/fabianschuiki/moore"
 license = "Apache-2.0 OR MIT"
 

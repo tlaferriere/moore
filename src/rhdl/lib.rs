@@ -9,10 +9,10 @@
 extern crate lazy_static;
 #[macro_use]
 extern crate moore_common;
-pub extern crate moore_vhdl_syntax as _;
+pub extern crate moore_rhdl_syntax as _;
 
 pub(crate) use moore_common as common;
-pub use moore_vhdl_syntax as syntax;
+pub use moore_rhdl_syntax as syntax;
 
 #[macro_use]
 pub mod arenas;

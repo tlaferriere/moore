@@ -1,6 +1,6 @@
 // Copyright (c) 2016-2021 Fabian Schuiki
 
-//! This module implements constant value calculation for VHDL.
+//! This module implements constant value calculation for RHDL.
 
 pub use crate::hir::Dir;
 use crate::score::TypeDeclRef;

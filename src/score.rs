@@ -15,6 +15,8 @@ use crate::common::Session;
 use crate::svlog::{self, ast as svlog_ast, Context};
 use crate::vhdl;
 use crate::vhdl::syntax::ast as vhdl_ast;
+use crate::rhdl;
+use crate::rhdl::syntax::ast as rhdl_ast;
 use std;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -33,6 +35,10 @@ pub struct ScoreContext<'lazy, 'sb: 'lazy, 'ast: 'sb, 'ctx: 'sb> {
     pub vhdl: &'sb vhdl::score::ScoreBoard<'ast, 'ctx>,
     /// The VHDL lazy phase table.
     pub vhdl_phases: &'lazy vhdl::lazy::LazyPhaseTable<'sb, 'ast, 'ctx>,
+    /// The RHDL scoreboard.
+    pub rhdl: &'sb rhdl::score::ScoreBoard<'ast, 'ctx>,
+    /// The RHDL lazy phase table.
+    pub rhdl_phases: &'lazy rhdl::lazy::LazyPhaseTable<'sb, 'ast, 'ctx>,
     /// The SystemVerilog scoreboard.
     pub svlog: &'sb svlog::GlobalContext<'ast>,
 }
@@ -92,6 +98,16 @@ impl<'lazy, 'sb, 'ast, 'ctx> ScoreContext<'lazy, 'sb, 'ast, 'ctx> {
         }
     }
 
+    /// Obtain a reference to the RHDL context.
+    pub fn rhdl(&'lazy self) -> rhdl::score::ScoreContext<'lazy, 'sb, 'ast, 'ctx> {
+        rhdl::score::ScoreContext {
+            sess: self.sess,
+            global: self,
+            sb: self.rhdl,
+            lazy: self.rhdl_phases,
+        }
+    }
+
     /// Add a library to the scoreboard.
     pub fn add_library(&self, name: Name, asts: &'ast [Ast<'ast>]) -> LibRef {
         let id = LibRef::new(NodeId::alloc());
@@ -107,6 +123,17 @@ impl<'lazy, 'sb, 'ast, 'ctx> ScoreContext<'lazy, 'sb, 'ast, 'ctx> {
             .collect();
         self.vhdl()
             .add_library(name, vhdl::score::LibRef::new(id.into()), vhdl_ast);
+
+        // Pass on the RHDL nodes to the RHDL scoreboard.
+        let rhdl_ast = asts
+            .iter()
+            .flat_map(|v| match *v {
+                Ast::Rhdl(ref a) => a.iter(),
+                _ => [].iter(),
+            })
+            .collect();
+        self.rhdl()
+            .add_library(name, rhdl::score::LibRef::new(id.into()), rhdl_ast);
 
         // Pass on the SystemVerilog nodes to the VHDL scoreboard.
         let svlog_ast = asts.iter().filter_map(|v| match *v {
@@ -162,8 +189,9 @@ impl<'lazy, 'sb, 'ast, 'ctx> NodeMaker<ScopeRef, &'ctx Defs>
                 let lib = self.sb.libs.borrow()[&id];
                 // Approach:
                 // 1) ask vhdl scoreboard for the defs
-                // 2) ask svlog scoreboard for the defs
-                // 3) create new def that is the union of the two and return
+                // 2) ask rhdl scoreboard for the defs
+                // 3) ask svlog scoreboard for the defs
+                // 4) create new def that is the union of the two and return
 
                 // Ask the VHDL scoreboard for the definitions in this library.
                 let vhdl =
@@ -175,6 +203,16 @@ impl<'lazy, 'sb, 'ast, 'ctx> NodeMaker<ScopeRef, &'ctx Defs>
                     println!("[SB] vhdl_sb returned {:?}", vhdl);
                 }
 
+                // Ask the RHDL scoreboard for the definitions in this library.
+                let rhdl =
+                    self.rhdl()
+                        .defs(rhdl::score::ScopeRef::Lib(rhdl::score::LibRef::new(
+                            id.into(),
+                        )))?;
+                if self.sess.opts.trace_scoreboard {
+                    println!("[SB] rhdl_sb returned {:?}", rhdl);
+                }
+
                 // Build a union of the names defined by the above scoreboards.
                 // Then determine the actual definition for each name, and throw
                 // an error if multiple definitions are encountered.
@@ -184,6 +222,12 @@ impl<'lazy, 'sb, 'ast, 'ctx> NodeMaker<ScopeRef, &'ctx Defs>
                         vhdl::score::ResolvableName::Ident(n) => Some(n),
                         _ => None,
                     })
+                    .chain(rhdl
+                        .iter()
+                        .filter_map(|(&k, _)| match k {
+                            rhdl::score::ResolvableName::Ident(n) => Some(n),
+                            _ => None,
+                        }))
                     .chain(self.svlog.modules().map(|(k, _)| k))
                     .collect();
                 debug!("names defined in library: {:?}", names);
@@ -195,11 +239,19 @@ impl<'lazy, 'sb, 'ast, 'ctx> NodeMaker<ScopeRef, &'ctx Defs>
                         Some(v) => v.iter(),
                         None => [].iter(),
                     };
+                    let rhdl_defs = match rhdl.get(&name.into()) {
+                        Some(v) => v.iter(),
+                        None => [].iter(),
+                    };
                     let svlog_defs = self.svlog.find_module(name.into());
+                    // TODO: Rename this var
                     let both_defs: Vec<Spanned<Def>> = vhdl_defs
                         .map(|d| Spanned::new(Def::Vhdl(d.value), d.span))
                         .chain(
                             svlog_defs.map(|id| Spanned::new(Def::Svlog(id), self.svlog.span(id))),
+                        )
+                        .chain(
+                            rhdl_defs.map(|d| Spanned::new(Def::Rhdl(d.value), d.span))
                         )
                         .collect();
 
@@ -232,6 +284,7 @@ impl<'lazy, 'sb, 'ast, 'ctx> NodeMaker<ScopeRef, &'ctx Defs>
 /// scoreboards.
 pub struct Arenas {
     pub vhdl: vhdl::score::Arenas,
+    pub rhdl: rhdl::score::Arenas,
     defs: Arena<Defs>,
 }
 
@@ -240,6 +293,7 @@ impl Arenas {
     pub fn new() -> Arenas {
         Arenas {
             vhdl: vhdl::score::Arenas::new(),
+            rhdl: rhdl::score::Arenas::new(),
             defs: Arena::new(),
         }
     }
@@ -250,6 +304,7 @@ impl Arenas {
 #[derive(Debug)]
 pub enum Ast<'a> {
     Vhdl(Vec<vhdl_ast::DesignUnit>),
+    Rhdl(Vec<rhdl_ast::DesignUnit>),
     Svlog(svlog_ast::SourceFile<'a>),
 }
 
@@ -264,6 +319,7 @@ node_ref!(LibRef);
 node_ref_group!(
     Def: Lib(LibRef),
     Vhdl(vhdl::score::Def),
+    Rhdl(rhdl::score::Def),
     Svlog(NodeId), // TODO: handle this case
 );
 node_ref_group!(ScopeRef: Root(RootRef), Lib(LibRef),);

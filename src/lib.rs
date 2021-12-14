@@ -14,5 +14,6 @@ pub use moore_common as common;
 pub use moore_common::*;
 pub use moore_svlog as svlog;
 pub use moore_vhdl as vhdl;
+pub use moore_rhdl as rhdl;
 
 pub mod score;

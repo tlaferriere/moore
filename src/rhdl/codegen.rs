@@ -1,6 +1,6 @@
 // Copyright (c) 2016-2021 Fabian Schuiki
 
-//! LLHD code generation for VHDL.
+//! LLHD code generation for RHDL.
 
 use crate::hir;
 use crate::konst::*;

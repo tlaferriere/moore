@@ -3,7 +3,7 @@
 //! A lexical analyzer and parser for VHDL source files as per
 //! IEEE 1076-2008.
 
-extern crate moore_common;
+use moore_common;
 
 pub mod ast;
 pub mod lexer;
